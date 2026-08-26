@@ -49,6 +49,17 @@ relational data modeling with an AI extraction layer.
 
 6. Open interactive API docs at http://127.0.0.1:8000/docs
 
+## Quickstart / Testing in Swagger UI
+
+Once the server is running, open **http://127.0.0.1:8000/docs** to test the full pipeline:
+
+1. **Register**: Call `POST /auth/signup` with an email and password.
+2. **Log In**: Call `POST /auth/login` using your credentials and copy the `access_token`.
+3. **Authorize**: Click the green **Authorize 🔒** button at the top right of Swagger UI, fill in your credentials, and click Authorize.
+4. **Upload Contract**: Call `POST /contracts/upload` to upload a PDF (`.pdf`) or Text (`.txt`) agreement. Copy the returned contract `id`.
+5. **Extract Obligations (AI)**: Call `POST /contracts/{contract_id}/extract` with your contract `id`. Gemini 3.6 Flash will extract all obligations, deadlines, and penalty clauses into PostgreSQL.
+6. **View Extracted Data**: Call `GET /obligations/contract/{contract_id}` to view all saved obligations.
+
 ## Data Model
 
 - **users** - single-user auth for now
