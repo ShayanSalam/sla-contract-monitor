@@ -31,7 +31,7 @@ relational data modeling with an AI extraction layer.
 
 2. Create a free Postgres database at [neon.tech](https://neon.tech) and copy the connection string.
 
-3. Copy `.env.example` to `.env` and fill in your `DATABASE_URL` and a generated `SECRET_KEY`:
+3. Copy `.env.example` to `.env` and fill in your `DATABASE_URL`, `SECRET_KEY`, and `GOOGLE_API_KEY` (from Google AI Studio):
    ```bash
    cp .env.example .env
    python -c "import secrets; print(secrets.token_hex(32))"   # paste output as SECRET_KEY
