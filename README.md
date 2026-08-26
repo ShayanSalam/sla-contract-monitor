@@ -4,17 +4,19 @@ An AI-powered system that extracts obligations and deadlines from contracts and
 alerts before deadlines are breached. Built as a backend-first project combining
 relational data modeling with an AI extraction layer.
 
-**Status:** Week 1 - Core backend + database (auth, contracts, obligations CRUD)
+**Status:** Week 2 - AI extraction layer (PDF parsing, LangChain + Gemini 3.6 Flash, structured output)
 
 ## Stack
 - FastAPI (Python)
-- PostgreSQL (hosted on Neon)
+- PostgreSQL (hosted locally / Neon)
 - SQLAlchemy + Alembic (ORM + migrations)
 - JWT auth
+- LangChain + Google Gemini 3.6 Flash (AI extraction)
+- pdfplumber (PDF parsing)
 
 ## Roadmap
 - [x] Week 1: Schema design, auth, CRUD endpoints
-- [ ] Week 2: AI extraction of obligations from uploaded contract text (LangChain)
+- [x] Week 2: AI extraction of obligations from uploaded contract text (LangChain)
 - [ ] Week 3: Scheduled deadline monitoring + email alerts
 - [ ] Week 4: Dashboard UI + deployment
 
