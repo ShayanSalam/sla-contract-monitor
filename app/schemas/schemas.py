@@ -39,7 +39,7 @@ class ObligationCreate(BaseModel):
     description: str
     deadline: datetime
     penalty_amount: Optional[Decimal] = None
-    penalty_currency: str = "KWD"
+    penalty_currency: str = "USD"
 
 
 class ObligationOut(BaseModel):
@@ -52,6 +52,20 @@ class ObligationOut(BaseModel):
     penalty_currency: str
     status: str
     is_ai_extracted: bool
+
+
+class ObligationStatusUpdate(BaseModel):
+    status: str  # e.g., "completed", "pending"
+
+
+# ---- AlertLog ----
+class AlertLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    obligation_id: str
+    alert_type: str
+    message: str
+    sent_at: datetime
 
 
 # ---- Auth ----

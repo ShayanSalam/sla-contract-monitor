@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.models import Obligation, Contract, User
-from app.schemas.schemas import ObligationCreate, ObligationOut
+from app.models.models import Obligation, Contract, User, ObligationStatus
+from app.schemas.schemas import ObligationCreate, ObligationOut, ObligationStatusUpdate
 
 router = APIRouter(prefix="/obligations", tags=["obligations"])
 
@@ -66,3 +66,35 @@ def list_obligations_for_contract(
         .filter(Contract.id == contract_id, Contract.owner_id == current_user.id)
         .all()
     )
+
+
+@router.patch("/{obligation_id}/status", response_model=ObligationOut)
+def update_obligation_status(
+    obligation_id: str,
+    payload: ObligationStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Update an obligation's status (e.g. mark as 'completed' once fulfilled, or reset).
+    """
+    obligation = (
+        db.query(Obligation)
+        .join(Contract)
+        .filter(Obligation.id == obligation_id, Contract.owner_id == current_user.id)
+        .first()
+    )
+    if not obligation:
+        raise HTTPException(status_code=404, detail="Obligation not found")
+
+    valid_statuses = [status.value for status in ObligationStatus]
+    if payload.status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{payload.status}'. Must be one of {valid_statuses}",
+        )
+
+    obligation.status = ObligationStatus(payload.status)
+    db.commit()
+    db.refresh(obligation)
+    return obligation
