@@ -12,6 +12,8 @@ from app.services.pdf_parser import extract_text_from_upload
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
 
+MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB - generous for a text-based contract PDF
+
 
 @router.post("/upload", response_model=ContractOut, status_code=201)
 async def upload_contract(
@@ -30,6 +32,12 @@ async def upload_contract(
     """
     file_bytes = await file.read()
     content_type = file.content_type or ""
+
+    if len(file_bytes) > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)}MB.",
+        )
 
     try:
         raw_text = extract_text_from_upload(file_bytes, content_type)
@@ -120,7 +128,7 @@ def extract_obligations(
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
 
-    if not contract.raw_text or not contract.raw_text.strip():\
+    if not contract.raw_text or not contract.raw_text.strip():
         raise HTTPException(status_code=400, detail="Contract has no text to extract from")
 
     contract.status = "processing"
