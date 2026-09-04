@@ -5,7 +5,7 @@ alerts before deadlines are breached. Built as a backend-first project combining
 relational data modeling with an AI extraction layer, background job scheduling,
 and a full audit trail.
 
-**Status:** Week 4 - Security hardening, test coverage, and deployment-ready
+**Status:** Week 4 in progress - dashboard, security hardening, test coverage, and AI evals complete
 
 ## Stack
 - FastAPI (Python)
@@ -23,7 +23,7 @@ and a full audit trail.
 - [x] Week 1: Schema design, auth, CRUD endpoints
 - [x] Week 2: AI extraction of obligations from uploaded contract text (LangChain)
 - [x] Week 3: Scheduled deadline monitoring + email alerts
-- [x] Week 4: Dashboard UI, security hardening, test coverage, deployment prep
+- [x] Week 4: Dashboard UI, security hardening, test coverage, AI evals
 
 ## Local Setup
 
@@ -192,35 +192,3 @@ here rather than leaving them implicit:
 - **No automated backups.** Local Postgres has none configured; a hosted
   Postgres provider (Neon, Render) should be used in production for this reason
   alone, since they include automated backups.
-
-## Deployment
-
-This app deploys as two separate services plus a hosted database - no code
-changes needed, only environment variables.
-
-### 1. Database - Neon (or Render Postgres / Supabase)
-Already using Neon or similar? Just note the connection string - you'll need
-it in step 2.
-
-### 2. Backend - Render
-1. Push this repo to GitHub if you haven't already.
-2. On [render.com](https://render.com), create a new **Web Service** from your repo.
-3. Build command: `pip install -r requirements.txt`
-4. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-5. Add environment variables in Render's dashboard (not a committed `.env`):
-   `DATABASE_URL`, `SECRET_KEY`, `GOOGLE_API_KEY`, `CORS_ORIGINS` (set this to
-   your Streamlit URL once you have it from step 3 - you can update it after).
-6. After the first deploy, run migrations once via Render's shell:
-   `alembic upgrade head`
-
-### 3. Frontend - Streamlit Community Cloud
-1. On [share.streamlit.io](https://share.streamlit.io), create a new app from
-   the same repo, pointing at `dashboard.py`.
-2. In the app's settings, add a secret: `API_BASE_URL = "https://your-backend.onrender.com"`
-   (your real Render URL from step 2).
-3. Deploy. Once you have your Streamlit URL, go back to Render and update
-   `CORS_ORIGINS` to include it.
-
-### 4. Verify
-Visit your Streamlit URL, sign up, upload a test contract, and confirm
-extraction and the dashboard both work end-to-end against the live backend.
