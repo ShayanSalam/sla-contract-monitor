@@ -19,6 +19,7 @@ import base64
 from datetime import datetime
 import requests
 import streamlit as st
+from streamlit_local_storage import LocalStorage
 
 # ── Asset Paths (defined early - page_icon needs this before set_page_config) ──
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
@@ -698,10 +699,41 @@ def kpi_context_pill(text, tone="neutral"):
     return f"<div class='kpi-context kpi-context-{tone}'>{text}</div>"
 
 # ── Session State Management ───────────────────────────────────────────────────
+localS = LocalStorage()
+
 if "access_token" not in st.session_state:
     st.session_state.access_token = None
 if "user_email" not in st.session_state:
     st.session_state.user_email = None
+
+# Restore a previous session from the browser's local storage, so a page
+# refresh doesn't log you out. Without this, session_state alone is wiped
+# on every reload since it lives only in server memory, not the browser -
+# local storage survives reloads (though not a full new browser/device).
+# This only runs once per fresh Streamlit session (guarded below), and the
+# restored token is verified against the real API before being trusted -
+# an expired or tampered token just falls back to the login screen.
+if "checked_local_storage" not in st.session_state:
+    st.session_state.checked_local_storage = True
+    if not st.session_state.access_token:
+        stored_token = localS.getItem("sla_access_token")
+        stored_email = localS.getItem("sla_user_email")
+        if stored_token and stored_email:
+            try:
+                verify_res = requests.get(
+                    f"{API_BASE_URL}/contracts/",
+                    headers={"Authorization": f"Bearer {stored_token}"},
+                    timeout=API_TIMEOUT,
+                )
+                if verify_res.status_code == 200:
+                    st.session_state.access_token = stored_token
+                    st.session_state.user_email = stored_email
+                else:
+                    # Token expired/invalid - clear it so we don't keep retrying
+                    localS.deleteItem("sla_access_token")
+                    localS.deleteItem("sla_user_email")
+            except Exception:
+                pass  # Backend unreachable right now - just show the login screen normally
 
 
 def get_headers():
@@ -719,8 +751,11 @@ def execute_login(email, password):
                 timeout=API_TIMEOUT,
             )
         if res.status_code == 200:
-            st.session_state.access_token = res.json()["access_token"]
+            token = res.json()["access_token"]
+            st.session_state.access_token = token
             st.session_state.user_email = email
+            localS.setItem("sla_access_token", token)
+            localS.setItem("sla_user_email", email)
             st.toast("Signed in successfully.")
             st.rerun()
         else:
@@ -835,6 +870,8 @@ with st.sidebar:
     if st.button("Sign Out", use_container_width=True):
         st.session_state.access_token = None
         st.session_state.user_email = None
+        localS.deleteItem("sla_access_token")
+        localS.deleteItem("sla_user_email")
         st.rerun()
 
 
@@ -1145,6 +1182,48 @@ with tab_upload:
     st.subheader("Add a New Contract")
     st.caption("Upload a contract document and we'll automatically identify its deadlines and obligations.")
 
+    # Show the result of the most recent extraction, if there is one waiting -
+    # stored in session_state so it survives the st.rerun() below (which is
+    # what actually refreshes the Compliance Overview tab's numbers - without
+    # this, extracted obligations wouldn't show up there until a full page
+    # reload, since Streamlit renders every tab from the same single fetch
+    # at the top of the script).
+    if st.session_state.get("last_extraction_result"):
+        result = st.session_state.pop("last_extraction_result")
+        if result["items"]:
+            st.success(f"Done! We found {len(result['items'])} obligation(s) in this contract. Check **Compliance Overview** to see them.")
+            st.markdown("#### What we found")
+            for idx, item in enumerate(result["items"], 1):
+                dl_str = item.get("deadline", "").split("T")[0]
+                pen_str = f"${float(item['penalty_amount']):,.2f} {item.get('penalty_currency', 'USD')}" if item.get("penalty_amount") else "No penalty on file"
+                st.markdown(
+                    f"""
+                    <div class='callout-group'>
+                        <div class='callout-group-index'>Obligation {idx}</div>
+                        <div class='callout-row'>
+                            <div class='callout-card callout-wide'>
+                                <span class='callout-label callout-label-obligation'>Description</span>
+                                <div class='callout-value'>{item.get('description')}</div>
+                            </div>
+                        </div>
+                        <div class='callout-row' style='margin-top: 10px;'>
+                            <div class='callout-card'>
+                                <span class='callout-label callout-label-date'>Due Date</span>
+                                <div class='callout-value'>{dl_str}</div>
+                            </div>
+                            <div class='callout-card'>
+                                <span class='callout-label callout-label-penalty'>Penalty if Missed</span>
+                                <div class='callout-value'>{pen_str}</div>
+                            </div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.success("Contract uploaded. We didn't find any obligations with specific deadlines in this document — you can add them manually if needed.")
+        st.divider()
+
     col_form, col_img = st.columns([1.2, 0.8])
 
     with col_form:
@@ -1179,38 +1258,12 @@ with tab_upload:
 
                         if extract_res.status_code == 201:
                             items = extract_res.json()
-                            if items:
-                                st.success(f"Done! We found {len(items)} obligation(s) in this contract.")
-                                st.markdown("#### What we found")
-                                for idx, item in enumerate(items, 1):
-                                    dl_str = item.get("deadline", "").split("T")[0]
-                                    pen_str = f"${float(item['penalty_amount']):,.2f} {item.get('penalty_currency', 'USD')}" if item.get("penalty_amount") else "No penalty on file"
-                                    st.markdown(
-                                        f"""
-                                        <div class='callout-group'>
-                                            <div class='callout-group-index'>Obligation {idx}</div>
-                                            <div class='callout-row'>
-                                                <div class='callout-card callout-wide'>
-                                                    <span class='callout-label callout-label-obligation'>Description</span>
-                                                    <div class='callout-value'>{item.get('description')}</div>
-                                                </div>
-                                            </div>
-                                            <div class='callout-row' style='margin-top: 10px;'>
-                                                <div class='callout-card'>
-                                                    <span class='callout-label callout-label-date'>Due Date</span>
-                                                    <div class='callout-value'>{dl_str}</div>
-                                                </div>
-                                                <div class='callout-card'>
-                                                    <span class='callout-label callout-label-penalty'>Penalty if Missed</span>
-                                                    <div class='callout-value'>{pen_str}</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        """,
-                                        unsafe_allow_html=True,
-                                    )
-                            else:
-                                st.success("Contract uploaded. We didn't find any obligations with specific deadlines in this document — you can add them manually if needed.")
+                            # Store the result and rerun - this refreshes contracts_list/
+                            # obligations_list at the top of the script so EVERY tab
+                            # (Compliance Overview, Contract Repository, etc.) shows the
+                            # new data immediately, without needing a page reload.
+                            st.session_state.last_extraction_result = {"items": items}
+                            st.rerun()
                         else:
                             st.error(friendly_error(extract_res, "We couldn't process this document right now. Please try again."))
                     else:
