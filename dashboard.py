@@ -710,30 +710,34 @@ if "user_email" not in st.session_state:
 # refresh doesn't log you out. Without this, session_state alone is wiped
 # on every reload since it lives only in server memory, not the browser -
 # local storage survives reloads (though not a full new browser/device).
-# This only runs once per fresh Streamlit session (guarded below), and the
-# restored token is verified against the real API before being trusted -
-# an expired or tampered token just falls back to the login screen.
-if "checked_local_storage" not in st.session_state:
-    st.session_state.checked_local_storage = True
-    if not st.session_state.access_token:
-        stored_token = localS.getItem("sla_access_token")
-        stored_email = localS.getItem("sla_user_email")
-        if stored_token and stored_email:
-            try:
-                verify_res = requests.get(
-                    f"{API_BASE_URL}/contracts/",
-                    headers={"Authorization": f"Bearer {stored_token}"},
-                    timeout=API_TIMEOUT,
-                )
-                if verify_res.status_code == 200:
-                    st.session_state.access_token = stored_token
-                    st.session_state.user_email = stored_email
-                else:
-                    # Token expired/invalid - clear it so we don't keep retrying
-                    localS.deleteItem("sla_access_token")
-                    localS.deleteItem("sla_user_email")
-            except Exception:
-                pass  # Backend unreachable right now - just show the login screen normally
+#
+# Note: getItem() is a custom component that round-trips to the browser's
+# JavaScript - it often returns None on the very first script run after a
+# page load, before the browser has had a chance to respond. So this check
+# deliberately runs on every rerun where we're not yet logged in (not just
+# once), giving the component the chance it needs to actually deliver the
+# real value after that first round-trip completes. The restored token is
+# always verified against the real API before being trusted - an expired
+# or tampered token just falls back to the login screen.
+if not st.session_state.access_token:
+    stored_token = localS.getItem("sla_access_token")
+    stored_email = localS.getItem("sla_user_email")
+    if stored_token and stored_email:
+        try:
+            verify_res = requests.get(
+                f"{API_BASE_URL}/contracts/",
+                headers={"Authorization": f"Bearer {stored_token}"},
+                timeout=API_TIMEOUT,
+            )
+            if verify_res.status_code == 200:
+                st.session_state.access_token = stored_token
+                st.session_state.user_email = stored_email
+            else:
+                # Token expired/invalid - clear it so we don't keep retrying
+                localS.deleteItem("sla_access_token")
+                localS.deleteItem("sla_user_email")
+        except Exception:
+            pass  # Backend unreachable right now - just show the login screen normally
 
 
 def get_headers():
