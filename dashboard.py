@@ -866,6 +866,7 @@ with st.sidebar:
         st.session_state.pop("cookie_retry_done", None)
         cookie_manager.delete("sla_access_token", key="del_token")
         cookie_manager.delete("sla_user_email", key="del_email")
+        time.sleep(0.5)  # Let the browser commit the cookie deletion before reload.
         st.rerun()
 
 
