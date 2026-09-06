@@ -687,6 +687,15 @@ def kpi_context_pill(text, tone="neutral"):
 # the constructor itself makes a component call, which caching disallows.
 cookie_manager = stx.CookieManager(key="sla_cookie_manager")
 
+
+def safe_delete_cookie(name, key):
+    """CookieManager.delete() raises KeyError internally if the cookie isn't
+    already in its own cache dict - guard against that library quirk."""
+    try:
+        cookie_manager.delete(name, key=key)
+    except KeyError:
+        pass
+
 if "access_token" not in st.session_state:
     st.session_state.access_token = None
 if "user_email" not in st.session_state:
@@ -710,8 +719,8 @@ if not st.session_state.access_token:
                     st.session_state.access_token = stored_token
                     st.session_state.user_email = stored_email
                 else:
-                    cookie_manager.delete("sla_access_token", key="del_expired_token")
-                    cookie_manager.delete("sla_user_email", key="del_expired_email")
+                    safe_delete_cookie("sla_access_token", key="del_expired_token")
+                    safe_delete_cookie("sla_user_email", key="del_expired_email")
             except Exception:
                 pass  # Backend unreachable - show the login screen normally
     elif not cookies and "cookie_retry_done" not in st.session_state:
@@ -864,8 +873,8 @@ with st.sidebar:
         st.session_state.access_token = None
         st.session_state.user_email = None
         st.session_state.pop("cookie_retry_done", None)
-        cookie_manager.delete("sla_access_token", key="del_token")
-        cookie_manager.delete("sla_user_email", key="del_email")
+        safe_delete_cookie("sla_access_token", key="del_token")
+        safe_delete_cookie("sla_user_email", key="del_email")
         time.sleep(0.5)  # Let the browser commit the cookie deletion before reload.
         st.rerun()
 
