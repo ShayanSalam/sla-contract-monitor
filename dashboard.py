@@ -699,15 +699,13 @@ def kpi_context_pill(text, tone="neutral"):
     return f"<div class='kpi-context kpi-context-{tone}'>{text}</div>"
 
 # ── Session State Management ───────────────────────────────────────────────────
-@st.cache_resource
-def get_cookie_manager():
-    """Cached so the same CookieManager component instance is reused across
-    reruns, instead of Streamlit creating a fresh one each time - the
-    documented pattern for this library to behave reliably."""
-    return stx.CookieManager()
-
-
-cookie_manager = get_cookie_manager()
+# CookieManager's constructor itself makes a component call (it reads all
+# cookies right away) - it must NOT be wrapped in @st.cache_resource, since
+# Streamlit forbids widget/component calls inside cached functions (they'd
+# only run on a cache "miss", not every rerun, which breaks a component that
+# needs to run every time). Its own key= parameter is what keeps it stable
+# across reruns instead.
+cookie_manager = stx.CookieManager(key="sla_cookie_manager")
 
 if "access_token" not in st.session_state:
     st.session_state.access_token = None
@@ -719,15 +717,16 @@ if "user_email" not in st.session_state:
 # reload since it lives only in server memory, not the browser - cookies
 # survive reloads (though not a full new browser/device).
 #
-# Note: get_all() round-trips to the browser's JavaScript - it can return
-# an empty result on the very first script run after a cold page load,
-# before the browser has had a chance to respond, and nothing automatically
-# triggers a second check on a fresh page load (unlike an internal
-# st.rerun(), which reruns naturally). So we force exactly one retry
-# ourselves: if the first check comes back empty, wait briefly for the
-# round-trip to finish, then explicitly rerun once to check again.
+# Note: CookieManager's constructor round-trips to the browser's JavaScript
+# to fetch cookies - it can return an empty result on the very first script
+# run after a cold page load, before the browser has had a chance to
+# respond, and nothing automatically triggers a second check on a fresh
+# page load (unlike an internal st.rerun(), which reruns naturally). So we
+# force exactly one retry ourselves: if the first check comes back empty,
+# wait briefly for the round-trip to finish, then explicitly rerun once to
+# check again.
 if not st.session_state.access_token:
-    cookies = cookie_manager.get_all()
+    cookies = cookie_manager.cookies
     stored_token = cookies.get("sla_access_token") if cookies else None
     stored_email = cookies.get("sla_user_email") if cookies else None
 
