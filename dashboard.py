@@ -712,16 +712,17 @@ if "user_email" not in st.session_state:
 # local storage survives reloads (though not a full new browser/device).
 #
 # Note: getItem() is a custom component that round-trips to the browser's
-# JavaScript - it often returns None on the very first script run after a
-# page load, before the browser has had a chance to respond. So this check
-# deliberately runs on every rerun where we're not yet logged in (not just
-# once), giving the component the chance it needs to actually deliver the
-# real value after that first round-trip completes. The restored token is
-# always verified against the real API before being trusted - an expired
-# or tampered token just falls back to the login screen.
+# JavaScript - it returns None on the very first script run after a cold
+# page load, before the browser has had a chance to respond, and nothing
+# automatically triggers a second check on a fresh page load (unlike an
+# internal st.rerun(), which reruns naturally). So we force exactly one
+# retry ourselves: if the first check comes back empty, wait briefly for
+# the round-trip to finish, then explicitly rerun once to check again.
+# Guarded so this can only happen once per fresh page load, not a loop.
 if not st.session_state.access_token:
     stored_token = localS.getItem("sla_access_token")
     stored_email = localS.getItem("sla_user_email")
+
     if stored_token and stored_email:
         try:
             verify_res = requests.get(
@@ -738,6 +739,12 @@ if not st.session_state.access_token:
                 localS.deleteItem("sla_user_email")
         except Exception:
             pass  # Backend unreachable right now - just show the login screen normally
+    elif "local_storage_retry_done" not in st.session_state:
+        # First check came back empty - the browser round-trip may not have
+        # finished yet. Wait briefly, then force exactly one more check.
+        st.session_state.local_storage_retry_done = True
+        time.sleep(0.6)
+        st.rerun()
 
 
 def get_headers():
