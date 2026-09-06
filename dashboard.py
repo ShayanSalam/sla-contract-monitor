@@ -16,10 +16,10 @@ import time
 import csv
 import io
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 import streamlit as st
-from streamlit_local_storage import LocalStorage
+import extra_streamlit_components as stx
 
 # ── Asset Paths (defined early - page_icon needs this before set_page_config) ──
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
@@ -699,29 +699,37 @@ def kpi_context_pill(text, tone="neutral"):
     return f"<div class='kpi-context kpi-context-{tone}'>{text}</div>"
 
 # ── Session State Management ───────────────────────────────────────────────────
-localS = LocalStorage()
+@st.cache_resource
+def get_cookie_manager():
+    """Cached so the same CookieManager component instance is reused across
+    reruns, instead of Streamlit creating a fresh one each time - the
+    documented pattern for this library to behave reliably."""
+    return stx.CookieManager()
+
+
+cookie_manager = get_cookie_manager()
 
 if "access_token" not in st.session_state:
     st.session_state.access_token = None
 if "user_email" not in st.session_state:
     st.session_state.user_email = None
 
-# Restore a previous session from the browser's local storage, so a page
-# refresh doesn't log you out. Without this, session_state alone is wiped
-# on every reload since it lives only in server memory, not the browser -
-# local storage survives reloads (though not a full new browser/device).
+# Restore a previous session from a browser cookie, so a page refresh
+# doesn't log you out. Without this, session_state alone is wiped on every
+# reload since it lives only in server memory, not the browser - cookies
+# survive reloads (though not a full new browser/device).
 #
-# Note: getItem() is a custom component that round-trips to the browser's
-# JavaScript - it returns None on the very first script run after a cold
-# page load, before the browser has had a chance to respond, and nothing
-# automatically triggers a second check on a fresh page load (unlike an
-# internal st.rerun(), which reruns naturally). So we force exactly one
-# retry ourselves: if the first check comes back empty, wait briefly for
-# the round-trip to finish, then explicitly rerun once to check again.
-# Guarded so this can only happen once per fresh page load, not a loop.
+# Note: get_all() round-trips to the browser's JavaScript - it can return
+# an empty result on the very first script run after a cold page load,
+# before the browser has had a chance to respond, and nothing automatically
+# triggers a second check on a fresh page load (unlike an internal
+# st.rerun(), which reruns naturally). So we force exactly one retry
+# ourselves: if the first check comes back empty, wait briefly for the
+# round-trip to finish, then explicitly rerun once to check again.
 if not st.session_state.access_token:
-    stored_token = localS.getItem("sla_access_token")
-    stored_email = localS.getItem("sla_user_email")
+    cookies = cookie_manager.get_all()
+    stored_token = cookies.get("sla_access_token") if cookies else None
+    stored_email = cookies.get("sla_user_email") if cookies else None
 
     if stored_token and stored_email:
         try:
@@ -735,14 +743,14 @@ if not st.session_state.access_token:
                 st.session_state.user_email = stored_email
             else:
                 # Token expired/invalid - clear it so we don't keep retrying
-                localS.deleteItem("sla_access_token")
-                localS.deleteItem("sla_user_email")
+                cookie_manager.delete("sla_access_token", key="del_expired_token")
+                cookie_manager.delete("sla_user_email", key="del_expired_email")
         except Exception:
             pass  # Backend unreachable right now - just show the login screen normally
-    elif "local_storage_retry_done" not in st.session_state:
+    elif not cookies and "cookie_retry_done" not in st.session_state:
         # First check came back empty - the browser round-trip may not have
         # finished yet. Wait briefly, then force exactly one more check.
-        st.session_state.local_storage_retry_done = True
+        st.session_state.cookie_retry_done = True
         time.sleep(0.6)
         st.rerun()
 
@@ -765,8 +773,9 @@ def execute_login(email, password):
             token = res.json()["access_token"]
             st.session_state.access_token = token
             st.session_state.user_email = email
-            localS.setItem("sla_access_token", token)
-            localS.setItem("sla_user_email", email)
+            cookie_expiry = datetime.now() + timedelta(days=1)
+            cookie_manager.set("sla_access_token", token, expires_at=cookie_expiry, key="set_token")
+            cookie_manager.set("sla_user_email", email, expires_at=cookie_expiry, key="set_email")
             st.toast("Signed in successfully.")
             st.rerun()
         else:
@@ -881,8 +890,8 @@ with st.sidebar:
     if st.button("Sign Out", use_container_width=True):
         st.session_state.access_token = None
         st.session_state.user_email = None
-        localS.deleteItem("sla_access_token")
-        localS.deleteItem("sla_user_email")
+        cookie_manager.delete("sla_access_token", key="del_token")
+        cookie_manager.delete("sla_user_email", key="del_email")
         st.rerun()
 
 
