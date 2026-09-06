@@ -1,14 +1,7 @@
 """
-ContractSentinel — Enterprise SLA & Obligation Compliance Platform.
-
-Features:
-  - Enterprise Upload Hub: Displays clean visual summary cards instead of raw developer JSON trees/UUIDs.
-  - Landing Homepage & Authentication Portal (Sign In, Create Account, Demo Access).
-  - Clean, functional Sign Out that returns users to the Landing Homepage.
-  - Sirion-grade visual theme (periwinkle hero banner, clean category badges, floating KPI cards).
-  - Embedded corporate imagery (Contract Signing, Audit, & Business Handshake).
-  - Dark Mode & Light Mode compatible via CSS variables.
-  - Live FastAPI backend & PostgreSQL integration (KPIs, Upload, AI Extraction, Status Updates, Audit Logs).
+ContractSentinel dashboard - Streamlit frontend for the SLA/Contract
+Obligation Monitor. Handles auth, contract upload, AI extraction results,
+deadline tracking, and audit trail, all backed by the FastAPI API.
 """
 import os
 import re
@@ -571,9 +564,7 @@ st.markdown(
 
 @st.cache_data
 def get_base64_image(path):
-    """Reads an image file and returns it as a base64 data URI, so it can be
-    embedded directly inside a raw HTML string (needed for the topbar, since
-    Streamlit widgets like st.image can't be nested inside a markdown div)."""
+    """Reads an image file and returns it as a base64 data URI for embedding in HTML."""
     if not os.path.exists(path):
         return None
     with open(path, "rb") as f:
@@ -583,9 +574,7 @@ def get_base64_image(path):
 
 
 def render_topbar(show_avatar=False):
-    """Consistent enterprise-style brand bar shown on every screen, signed
-    in or not - this is what makes the app feel like one cohesive product
-    rather than a loose stack of pages."""
+    """Consistent enterprise brand bar shown on every screen, signed in or not."""
     avatar_html = ""
     if show_avatar and st.session_state.user_email:
         initials = get_initials(st.session_state.user_email)
@@ -610,12 +599,7 @@ def render_topbar(show_avatar=False):
 
 
 def friendly_error(response, fallback="Something went wrong. Please try again, or contact your administrator if this continues."):
-    """
-    Extracts a clean, business-readable message from an API error response.
-    Never surfaces raw stack traces, JSON blobs, or backend implementation
-    details to the end user - those aren't actionable for a legal/procurement
-    team member and just look broken/unprofessional.
-    """
+    """Extracts a clean, business-readable message from an API error response."""
     try:
         detail = response.json().get("detail")
         if detail and isinstance(detail, str):
@@ -699,12 +683,8 @@ def kpi_context_pill(text, tone="neutral"):
     return f"<div class='kpi-context kpi-context-{tone}'>{text}</div>"
 
 # ── Session State Management ───────────────────────────────────────────────────
-# CookieManager's constructor itself makes a component call (it reads all
-# cookies right away) - it must NOT be wrapped in @st.cache_resource, since
-# Streamlit forbids widget/component calls inside cached functions (they'd
-# only run on a cache "miss", not every rerun, which breaks a component that
-# needs to run every time). Its own key= parameter is what keeps it stable
-# across reruns instead.
+# key= keeps this stable across reruns - must not be @st.cache_resource, since
+# the constructor itself makes a component call, which caching disallows.
 cookie_manager = stx.CookieManager(key="sla_cookie_manager")
 
 if "access_token" not in st.session_state:
@@ -712,44 +692,36 @@ if "access_token" not in st.session_state:
 if "user_email" not in st.session_state:
     st.session_state.user_email = None
 
-# Restore a previous session from a browser cookie, so a page refresh
-# doesn't log you out. Without this, session_state alone is wiped on every
-# reload since it lives only in server memory, not the browser - cookies
-# survive reloads (though not a full new browser/device).
-#
-# Note: CookieManager's constructor round-trips to the browser's JavaScript
-# to fetch cookies - it can return an empty result on the very first script
-# run after a cold page load, before the browser has had a chance to
-# respond, and nothing automatically triggers a second check on a fresh
-# page load (unlike an internal st.rerun(), which reruns naturally). So we
-# force exactly one retry ourselves: if the first check comes back empty,
-# wait briefly for the round-trip to finish, then explicitly rerun once to
-# check again.
+# Restores a previous session from a cookie so a refresh doesn't log you out.
 if not st.session_state.access_token:
     cookies = cookie_manager.cookies
     stored_token = cookies.get("sla_access_token") if cookies else None
     stored_email = cookies.get("sla_user_email") if cookies else None
 
     if stored_token and stored_email:
-        try:
-            verify_res = requests.get(
-                f"{API_BASE_URL}/contracts/",
-                headers={"Authorization": f"Bearer {stored_token}"},
-                timeout=API_TIMEOUT,
-            )
-            if verify_res.status_code == 200:
-                st.session_state.access_token = stored_token
-                st.session_state.user_email = stored_email
-            else:
-                # Token expired/invalid - clear it so we don't keep retrying
-                cookie_manager.delete("sla_access_token", key="del_expired_token")
-                cookie_manager.delete("sla_user_email", key="del_expired_email")
-        except Exception:
-            pass  # Backend unreachable right now - just show the login screen normally
+        with st.spinner("Restoring your session..."):
+            try:
+                verify_res = requests.get(
+                    f"{API_BASE_URL}/contracts/",
+                    headers={"Authorization": f"Bearer {stored_token}"},
+                    timeout=API_TIMEOUT,
+                )
+                if verify_res.status_code == 200:
+                    st.session_state.access_token = stored_token
+                    st.session_state.user_email = stored_email
+                else:
+                    cookie_manager.delete("sla_access_token", key="del_expired_token")
+                    cookie_manager.delete("sla_user_email", key="del_expired_email")
+            except Exception:
+                pass  # Backend unreachable - show the login screen normally
     elif not cookies and "cookie_retry_done" not in st.session_state:
-        # First check came back empty - the browser round-trip may not have
-        # finished yet. Wait briefly, then force exactly one more check.
+        # Cookie may not have arrived from the browser yet - retry once.
         st.session_state.cookie_retry_done = True
+        st.markdown(
+            "<div style='text-align:center; padding-top:120px;'>"
+            "<p style='color:#94A3B8;'>Loading ContractSentinel...</p></div>",
+            unsafe_allow_html=True,
+        )
         time.sleep(0.6)
         st.rerun()
 
@@ -776,10 +748,7 @@ def execute_login(email, password):
             cookie_manager.set("sla_access_token", token, expires_at=cookie_expiry, key="set_token")
             cookie_manager.set("sla_user_email", email, expires_at=cookie_expiry, key="set_email")
             st.toast("Signed in successfully.")
-            # Give the browser a moment to actually commit the cookie write
-            # before reloading the page - otherwise the rerun below can fire
-            # before the write finishes, meaning the cookie was never really
-            # saved even though this code ran without error.
+            # Brief pause so the browser finishes writing the cookie before reload.
             time.sleep(0.5)
             st.rerun()
         else:
@@ -894,17 +863,14 @@ with st.sidebar:
     if st.button("Sign Out", use_container_width=True):
         st.session_state.access_token = None
         st.session_state.user_email = None
+        st.session_state.pop("cookie_retry_done", None)
         cookie_manager.delete("sla_access_token", key="del_token")
         cookie_manager.delete("sla_user_email", key="del_email")
         st.rerun()
 
 
 # ── Data Loading ────────────────────────────────────────────────────────────────
-# A slow first request (e.g. right after the backend restarts) is normal and
-# shouldn't be shown to the end user as an error. We show a loading spinner
-# while fetching, silently retry once on a transient hiccup, and only bother
-# the user with something to look at if it genuinely keeps failing - and even
-# then, give them an action (Retry) rather than a passive warning to puzzle over.
+# Shows a spinner, retries once on failure, and only shows an error if it persists.
 
 def fetch_dashboard_data():
     contracts, obligations, alerts = [], [], []
@@ -975,10 +941,7 @@ total_penalty_risk = sum(
 
 st.session_state.last_refreshed = datetime.now().strftime("%I:%M %p")
 
-# Richer sidebar - quick stats + help, added after data loads since it needs
-# the computed counts above. Streamlit renders sidebar content in the order
-# it was written across the whole script run, so this appends below the
-# Actions section already written earlier.
+# Richer sidebar - appended after data loads since sidebar renders in write order.
 with st.sidebar:
     st.divider()
     st.markdown("#### Quick Stats")
@@ -1006,7 +969,7 @@ with tab_compliance:
         st.markdown(
             """
             <div class='sentinel-hero-banner'>
-                <div class='sentinel-hero-title'>Compliance Overview</div>
+                <div class='sentinel-hero-title'>Your Compliance Snapshot</div>
                 <div class='sentinel-hero-subtitle'>Track every contract obligation, deadline, and penalty risk in one place.</div>
             </div>
             """,
@@ -1206,12 +1169,8 @@ with tab_upload:
     st.subheader("Add a New Contract")
     st.caption("Upload a contract document and we'll automatically identify its deadlines and obligations.")
 
-    # Show the result of the most recent extraction, if there is one waiting -
-    # stored in session_state so it survives the st.rerun() below (which is
-    # what actually refreshes the Compliance Overview tab's numbers - without
-    # this, extracted obligations wouldn't show up there until a full page
-    # reload, since Streamlit renders every tab from the same single fetch
-    # at the top of the script).
+    # Shows the last extraction result, stored in session_state so it survives
+    # the st.rerun() below (which refreshes every tab's data).
     if st.session_state.get("last_extraction_result"):
         result = st.session_state.pop("last_extraction_result")
         if result["items"]:
@@ -1282,10 +1241,7 @@ with tab_upload:
 
                         if extract_res.status_code == 201:
                             items = extract_res.json()
-                            # Store the result and rerun - this refreshes contracts_list/
-                            # obligations_list at the top of the script so EVERY tab
-                            # (Compliance Overview, Contract Repository, etc.) shows the
-                            # new data immediately, without needing a page reload.
+                            # Rerun so every tab refreshes with the new data.
                             st.session_state.last_extraction_result = {"items": items}
                             st.rerun()
                         else:
