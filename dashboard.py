@@ -776,6 +776,11 @@ def execute_login(email, password):
             cookie_manager.set("sla_access_token", token, expires_at=cookie_expiry, key="set_token")
             cookie_manager.set("sla_user_email", email, expires_at=cookie_expiry, key="set_email")
             st.toast("Signed in successfully.")
+            # Give the browser a moment to actually commit the cookie write
+            # before reloading the page - otherwise the rerun below can fire
+            # before the write finishes, meaning the cookie was never really
+            # saved even though this code ran without error.
+            time.sleep(0.5)
             st.rerun()
         else:
             st.error(friendly_error(res, "We couldn't sign you in. Please check your email and password and try again."))
