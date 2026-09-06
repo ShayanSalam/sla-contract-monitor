@@ -1,29 +1,40 @@
 # SLA / Contract Obligation Monitor
 
 An AI-powered system that extracts obligations and deadlines from contracts and
-alerts before deadlines are breached. Built as a backend-first project combining
-relational data modeling with an AI extraction layer, background job scheduling,
-and a full audit trail.
+alerts before deadlines are breached. Built as a full-stack project combining
+relational data modeling, an AI extraction layer, background job scheduling,
+and a full audit trail — deployed and live.
 
-**Status:** Week 4 in progress - dashboard, security hardening, test coverage, and AI evals complete
+**Status:** Weeks 1-4 complete. Deployed and live.
+
+## Live Demo
+
+- **Dashboard:** [contractsentinel.streamlit.app](https://contractsentinel.streamlit.app)
+- **API:** [sla-contract-monitor.onrender.com](https://sla-contract-monitor.onrender.com) ([interactive docs](https://sla-contract-monitor.onrender.com/docs))
+
+Note: the backend runs on Render's free tier, which sleeps after 15 minutes of
+inactivity. The first request after a period of no traffic can take 30-50
+seconds to wake up — this is expected, not a bug.
 
 ## Stack
+
 - FastAPI (Python)
-- PostgreSQL (hosted locally / Neon)
+- PostgreSQL (Neon, hosted)
 - SQLAlchemy + Alembic (ORM + migrations)
 - JWT auth + slowapi (rate limiting on auth endpoints)
 - LangChain + Google Gemini (AI extraction)
 - pdfplumber (PDF parsing)
 - APScheduler (background deadline monitoring engine)
 - Audit Trail Logging (`alerts_log` PostgreSQL table)
-- Streamlit (dashboard UI)
+- Streamlit (dashboard UI, deployed on Streamlit Community Cloud)
 - pytest (automated test suite)
 
 ## Roadmap
+
 - [x] Week 1: Schema design, auth, CRUD endpoints
 - [x] Week 2: AI extraction of obligations from uploaded contract text (LangChain)
 - [x] Week 3: Scheduled deadline monitoring + email alerts
-- [x] Week 4: Dashboard UI, security hardening, test coverage, AI evals
+- [x] Week 4: Dashboard UI, security hardening, test coverage, evals, deployment
 
 ## Local Setup
 
@@ -70,27 +81,6 @@ real PostgreSQL data. Covers signup/login, JWT-protected route access, per-user
 data isolation (one user can never see another user's contracts), and core
 contract/obligation CRUD.
 
-## Quickstart / Testing in Swagger UI
-
-Once the server is running, open **http://127.0.0.1:8000/docs** to test the full pipeline:
-
-1. **Register**: Call `POST /auth/signup` with an email and password.
-2. **Log In**: Call `POST /auth/login` using your credentials and copy the `access_token`.
-3. **Authorize**: Click the green **Authorize** button at the top right of Swagger UI.
-4. **Upload Contract**: Call `POST /contracts/upload` to upload a PDF or `.txt` agreement.
-5. **Extract Obligations (AI)**: Call `POST /contracts/{contract_id}/extract`.
-6. **Run Deadline Monitoring**: Call `POST /monitoring/run-check`.
-7. **View Audit Logs**: Call `GET /monitoring/alerts`.
-8. **Update Obligation Status**: Call `PATCH /obligations/{obligation_id}/status`.
-
-## Data Model
-
-- **users** - account authentication
-- **parties** - companies/individuals named in a contract
-- **contracts** - uploaded contract text + metadata
-- **obligations** - extracted deadlines/duties tied to a contract
-- **alerts_log** - audit trail of every alert sent, tied to an obligation
-
 ## AI Extraction Quality — Evals
 
 The `evals/` directory contains a labeled test set (`evals/dataset.py`) of
@@ -112,7 +102,7 @@ extraction.
 The scoring logic itself (independent of real API calls) is unit tested in
 `tests/test_eval_scorer.py` - run as part of the normal `pytest tests/` suite.
 
-### Latest results (real run against live Gemini, 2026-09-03)
+### Latest results (real run against live Gemini)
 
 ```
 7/7 cases passed
@@ -163,6 +153,14 @@ The following hardening is in place:
 - Per-user data isolation enforced at the query level - every contract/obligation
   lookup is scoped to `Contract.owner_id == current_user.id`, not just hidden in the UI
 
+## Data Model
+
+- **users** - account authentication
+- **parties** - companies/individuals named in a contract
+- **contracts** - uploaded contract text + metadata
+- **obligations** - extracted deadlines/duties tied to a contract
+- **alerts_log** - audit trail of every alert sent, tied to an obligation
+
 ## Production Readiness - Known Scope Decisions
 
 This is a portfolio project, not a commercial product, and some gaps are
@@ -170,18 +168,19 @@ deliberate scope decisions rather than oversights. Documenting them explicitly
 here rather than leaving them implicit:
 
 - **Single-tenant per account.** Each user account is fully isolated - there is
-  no "organization" or team concept yet. A real multi-employee company deployment
+  no "organization" or team concept. A real multi-employee company deployment
   would need an `Organization` model with `organization_id` on every table, plus
-  role-based permissions (admin vs. member). This is a genuine architecture
-  change, not a small tweak.
+  role-based permissions (admin vs. member). This was prototyped and tested during
+  development but deliberately not carried into the final scope, since it's a
+  genuine architecture change, not a small tweak.
 - **No password reset flow.** Forgotten passwords currently have no self-service
   recovery path.
 - **No role-based access control.** Every authenticated user has identical full
   access to their own data - there's no admin/member distinction.
 - **Email alerts run in simulated mode by default.** Without `SMTP_HOST` /
-  `SMTP_USER` / `SMTP_PASSWORD` set in `.env`, alerts are logged to the console
-  instead of actually sent. Set real SMTP (or SendGrid/AWS SES) credentials to
-  enable real email delivery.
+  `SMTP_USER` / `SMTP_PASSWORD` set in the environment, alerts are logged to the
+  console instead of actually sent. Set real SMTP (or SendGrid/AWS SES)
+  credentials to enable real email delivery.
 - **AI extraction has no re-run protection.** Running extraction twice on the
   same contract creates duplicate obligations by design - this was Week 2's
   scope (proving extraction works), not idempotency handling.
@@ -189,6 +188,41 @@ here rather than leaving them implicit:
   `/obligations/` currently return every row for a user in one response. The
   dashboard paginates client-side after fetching everything - fine at current
   scale, would need real `LIMIT`/`OFFSET` API pagination at higher record counts.
-- **No automated backups.** Local Postgres has none configured; a hosted
-  Postgres provider (Neon, Render) should be used in production for this reason
-  alone, since they include automated backups.
+- **Session persistence relies on fixed timing delays, not true synchronization.**
+  Login/logout use a short hard-coded pause to let browser cookie writes finish
+  before reloading the page, so a refresh doesn't log you out. This works
+  reliably most of the time, but under network latency or a cold backend
+  (Render's free tier sleeping) it can occasionally behave inconsistently. A
+  production-grade fix would use a client-side acknowledgment instead of a
+  timing guess.
+- **No automated backups configured locally.** The live deployment uses Neon,
+  which includes automated backups; a local Postgres setup would need its own
+  backup strategy for real use.
+
+## Deployment
+
+This app runs as two separate live services plus a hosted database - the
+architecture is designed so no code changes are needed between environments,
+only environment variables.
+
+- **Database:** [Neon](https://neon.tech) (free tier, serverless Postgres)
+- **Backend:** [Render](https://render.com) (free tier Web Service)
+- **Frontend:** [Streamlit Community Cloud](https://share.streamlit.io)
+
+To redeploy your own copy:
+
+1. **Database** - create a free Postgres project at Neon, copy the connection string.
+2. **Backend (Render)** - create a Web Service from this repo.
+   - Build command: `pip install -r requirements.txt`
+   - Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - Environment variables: `DATABASE_URL`, `SECRET_KEY`, `GOOGLE_API_KEY`, `CORS_ORIGINS`
+   - After the first deploy, run `alembic upgrade head` once via Render's shell
+     to create the tables on the new database.
+3. **Frontend (Streamlit Cloud)** - create a new app pointing at `dashboard.py`.
+   - Add a secret: `API_BASE_URL = "https://your-backend.onrender.com"`
+   - Once deployed, update the backend's `CORS_ORIGINS` to include the new
+     Streamlit URL.
+
+## License
+
+MIT
