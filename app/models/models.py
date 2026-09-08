@@ -47,17 +47,9 @@ class Contract(Base):
     original_filename = Column(String, nullable=True)
     status = Column(String, default="uploaded")       # uploaded -> processing -> processed -> failed
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner = relationship("User", back_populates="contracts")
     obligations = relationship("Obligation", back_populates="contract", cascade="all, delete-orphan")
-
-    @property
-    def content_length(self) -> int:
-        """Character count of raw_text. Used client-side to estimate how
-        long extraction will take (chunk count * per-chunk time), so this
-        doesn't need its own migration - just exposed via ContractOut."""
-        return len(self.raw_text) if self.raw_text else 0
 
 
 class ObligationStatus(str, enum.Enum):

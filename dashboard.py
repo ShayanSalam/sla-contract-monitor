@@ -610,55 +610,6 @@ def friendly_error(response, fallback="Something went wrong. Please try again, o
 
 
 CONNECTION_ERROR_MSG = "We couldn't reach the system right now. Please try again in a moment, or contact your administrator if this continues."
-
-
-# --- Extraction time estimate ---
-# Mirrors the server's actual chunking (app/services/extraction.py:
-# CHUNK_SIZE=12000, CHUNK_OVERLAP=300) so the estimate is grounded in what
-# will really happen, not a guess. Per-chunk timing assumes the Gemini
-# free-tier limit of 5 requests/minute: the first 5 chunks go through at
-# roughly normal API latency, and anything beyond that gets throttled to
-# ~1 chunk per 12 seconds. This is an estimate, not a guarantee - actual
-# API latency varies - so it's always shown as a range.
-_CHUNK_SIZE = 12_000
-_CHUNK_OVERLAP = 300
-_SECONDS_PER_CHUNK_UNTHROTTLED = 25  # observed: dense legal text with a
-                                      # complex structured schema regularly
-                                      # takes Gemini 20-40s+ per chunk, not
-                                      # the few seconds a simple chat call
-                                      # would take - corrected from an
-                                      # earlier, too-optimistic assumption
-_SECONDS_PER_CHUNK_THROTTLED = 35
-_FREE_TIER_BURST = 5
-
-
-def estimate_chunk_count(content_length: int) -> int:
-    if content_length <= _CHUNK_SIZE:
-        return 1
-    step = _CHUNK_SIZE - _CHUNK_OVERLAP
-    return 1 + -(-(content_length - _CHUNK_SIZE) // step)  # ceil division
-
-
-def estimate_extraction_seconds(content_length: int):
-    """Returns (low, high) estimated seconds for extraction to complete."""
-    chunks = estimate_chunk_count(content_length)
-    if chunks <= _FREE_TIER_BURST:
-        best = chunks * _SECONDS_PER_CHUNK_UNTHROTTLED
-    else:
-        best = (_FREE_TIER_BURST * _SECONDS_PER_CHUNK_UNTHROTTLED) + (
-            (chunks - _FREE_TIER_BURST) * _SECONDS_PER_CHUNK_THROTTLED
-        )
-    low = max(5, int(best * 0.7))
-    high = int(best * 1.6) + 10
-    return low, high
-
-
-def format_seconds(s: int) -> str:
-    return f"{s}s" if s < 60 else f"{s // 60}m {s % 60}s"
-
-
-def format_seconds_range(low: int, high: int) -> str:
-    return f"{format_seconds(low)} - {format_seconds(high)}"
 TIMEOUT_ERROR_MSG = "This is taking longer than expected. Please try again in a moment."
 
 
@@ -1290,67 +1241,27 @@ with tab_upload:
 
                     if upload_res.status_code == 201:
                         contract_id = upload_res.json()["id"]
-                        content_length = upload_res.json().get("content_length", 0)
-                        low, high = estimate_extraction_seconds(content_length)
 
-                        with st.spinner("Starting AI extraction..."):
+                        with st.spinner("Identifying obligations and deadlines..."):
                             extract_res = requests.post(
                                 f"{API_BASE_URL}/contracts/{contract_id}/extract",
                                 headers=get_headers(),
-                                timeout=30,
+                                timeout=60,
                             )
 
-                        if extract_res.status_code == 202:
-                            # Extraction now runs in the background on the server -
-                            # this call returns almost instantly. We do a short,
-                            # bounded check here so a fast/small document can show
-                            # its result immediately, but we never block longer
-                            # than a few seconds: if it's not done by then, the
-                            # user is freed to keep using the app while it
-                            # finishes on its own. The Contract Repository tab
-                            # will reflect the final status whenever they check it.
-                            final_status = "processing"
-                            status_placeholder = st.empty()
-                            start_time = time.time()
-                            for _ in range(4):
-                                elapsed = int(time.time() - start_time)
-                                status_placeholder.info(
-                                    f"Reading the document and identifying obligations... "
-                                    f"elapsed {elapsed}s (estimated {format_seconds_range(low, high)})"
-                                )
-                                time.sleep(2)
-                                check_res = requests.get(
-                                    f"{API_BASE_URL}/contracts/{contract_id}",
-                                    headers=get_headers(),
-                                    timeout=API_TIMEOUT,
-                                )
-                                if check_res.status_code == 200:
-                                    final_status = check_res.json().get("status", "processing")
-                                if final_status in ("processed", "failed"):
-                                    break
-                            status_placeholder.empty()
-
-                            if final_status == "processed":
-                                st.success("Done! Obligations have been identified.")
-                            elif final_status == "failed":
-                                st.error("Extraction failed on this document. You can retry it from the Contract Repository tab.")
-                            else:
-                                st.info(
-                                    f"This document is larger than usual (estimated "
-                                    f"{format_seconds_range(low, high)} total), so extraction is still running "
-                                    f"in the background. Feel free to keep using the app - check the Contract "
-                                    f"Repository tab in a bit and it'll be ready."
-                                )
-                            st.session_state.last_extraction_result = {"contract_id": contract_id}
+                        if extract_res.status_code == 201:
+                            items = extract_res.json()
+                            # Rerun so every tab refreshes with the new data.
+                            st.session_state.last_extraction_result = {"items": items}
                             st.rerun()
                         else:
-                            st.error(friendly_error(extract_res, "We couldn't start processing this document. Please try again."))
+                            st.error(friendly_error(extract_res, "We couldn't process this document right now. Please try again."))
                     else:
                         st.error(friendly_error(upload_res, "We couldn't upload this file. Please check the format and try again."))
                 except requests.exceptions.ConnectionError:
                     st.error(CONNECTION_ERROR_MSG)
                 except requests.exceptions.Timeout:
-                    st.error("This is taking a moment - check the Contract Repository tab shortly, it may still finish in the background.")
+                    st.error("This document is taking longer than expected to process. Please try again in a moment.")
                 except Exception:
                     st.error(CONNECTION_ERROR_MSG)
 
@@ -1420,95 +1331,6 @@ with tab_contracts:
                     st.markdown(f"<span class='reference-tag'>Reference: {c.get('id')[:8]}</span>", unsafe_allow_html=True)
                 with badge_col:
                     st.markdown(f"<span class='{badge_class}'>{status_label.upper()}</span>", unsafe_allow_html=True)
-
-                # Still running in the background (extraction is now async) -
-                # give the user an easy way to check without re-uploading.
-                # Also offer delete here: if the server process restarted or
-                # redeployed mid-extraction, this row can be stuck at
-                # "processing" forever with no automatic recovery, since
-                # nothing ever runs to flip its status to "failed" in that
-                # case. Deleting a contract that's genuinely still running is
-                # safe - the background task will simply fail to save its
-                # results afterward (the row it's looking for is gone) rather
-                # than creating orphaned data.
-                if contract_status == "processing":
-                    # updated_at reflects when this contract last changed
-                    # status - i.e. when the *current* extraction attempt
-                    # actually started. Using created_at here was a bug: for
-                    # a contract that had been retried, it showed time since
-                    # the ORIGINAL upload, not since this attempt began,
-                    # making things look far more stuck than they were.
-                    started_at_str = c.get("updated_at") or c.get("created_at", "")
-                    try:
-                        started_dt = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
-                        elapsed_s = int((datetime.now(started_dt.tzinfo) - started_dt).total_seconds())
-                    except (ValueError, TypeError):
-                        elapsed_s = None
-                    low, high = estimate_extraction_seconds(c.get("content_length", 0))
-                    if elapsed_s is not None:
-                        st.caption(f"⏱ Processing for {format_seconds(elapsed_s)} · estimated {format_seconds_range(low, high)} total")
-                    else:
-                        st.caption(f"⏱ Estimated {format_seconds_range(low, high)} total")
-
-                    check_col, stuck_delete_col = st.columns(2)
-                    with check_col:
-                        if st.button("Check status", key=f"refresh_{c['id']}", use_container_width=True):
-                            st.rerun()
-                    with stuck_delete_col:
-                        if st.button("Delete (if stuck)", key=f"delete_stuck_{c['id']}", use_container_width=True):
-                            try:
-                                del_res = requests.delete(
-                                    f"{API_BASE_URL}/contracts/{c['id']}",
-                                    headers=get_headers(),
-                                    timeout=API_TIMEOUT,
-                                )
-                                if del_res.status_code == 204:
-                                    st.toast("Contract deleted.")
-                                    st.rerun()
-                                else:
-                                    st.error(friendly_error(del_res, "Couldn't delete this contract right now."))
-                            except requests.exceptions.ConnectionError:
-                                st.error(CONNECTION_ERROR_MSG)
-
-                # Failed or never-extracted contracts: offer retry (reuses this
-                # same contract_id, so it never creates a duplicate row) and
-                # delete (cleans up the row entirely) instead of forcing a
-                # re-upload, which is what caused the duplicate-contract issue.
-                if contract_status in ("failed", "uploaded"):
-                    retry_col, delete_col = st.columns(2)
-                    with retry_col:
-                        if st.button("Retry Extraction", key=f"retry_{c['id']}", use_container_width=True):
-                            try:
-                                with st.spinner("Starting extraction again..."):
-                                    retry_res = requests.post(
-                                        f"{API_BASE_URL}/contracts/{c['id']}/extract",
-                                        headers=get_headers(),
-                                        timeout=30,
-                                    )
-                                if retry_res.status_code == 202:
-                                    st.toast("Extraction restarted - running in the background.")
-                                    st.rerun()
-                                else:
-                                    st.error(friendly_error(retry_res, "Extraction failed again. Please try again shortly."))
-                            except requests.exceptions.Timeout:
-                                st.error("Still taking longer than expected. Please try again in a moment.")
-                            except requests.exceptions.ConnectionError:
-                                st.error(CONNECTION_ERROR_MSG)
-                    with delete_col:
-                        if st.button("Delete Contract", key=f"delete_{c['id']}", use_container_width=True):
-                            try:
-                                del_res = requests.delete(
-                                    f"{API_BASE_URL}/contracts/{c['id']}",
-                                    headers=get_headers(),
-                                    timeout=API_TIMEOUT,
-                                )
-                                if del_res.status_code == 204:
-                                    st.toast("Contract deleted.")
-                                    st.rerun()
-                                else:
-                                    st.error(friendly_error(del_res, "Couldn't delete this contract right now."))
-                            except requests.exceptions.ConnectionError:
-                                st.error(CONNECTION_ERROR_MSG)
 
                 if contract_obligations:
                     show_key = f"show_obs_{c['id']}"

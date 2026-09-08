@@ -30,8 +30,6 @@ class ContractOut(BaseModel):
     status: str
     original_filename: Optional[str] = None
     created_at: datetime
-    updated_at: datetime
-    content_length: int = 0
 
 
 # ---- Obligation ----
