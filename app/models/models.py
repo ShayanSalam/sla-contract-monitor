@@ -47,6 +47,7 @@ class Contract(Base):
     original_filename = Column(String, nullable=True)
     status = Column(String, default="uploaded")       # uploaded -> processing -> processed -> failed
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner = relationship("User", back_populates="contracts")
     obligations = relationship("Obligation", back_populates="contract", cascade="all, delete-orphan")

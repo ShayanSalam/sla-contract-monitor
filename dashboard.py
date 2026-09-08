@@ -1432,10 +1432,16 @@ with tab_contracts:
                 # results afterward (the row it's looking for is gone) rather
                 # than creating orphaned data.
                 if contract_status == "processing":
-                    created_at_str = c.get("created_at", "")
+                    # updated_at reflects when this contract last changed
+                    # status - i.e. when the *current* extraction attempt
+                    # actually started. Using created_at here was a bug: for
+                    # a contract that had been retried, it showed time since
+                    # the ORIGINAL upload, not since this attempt began,
+                    # making things look far more stuck than they were.
+                    started_at_str = c.get("updated_at") or c.get("created_at", "")
                     try:
-                        created_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
-                        elapsed_s = int((datetime.now(created_dt.tzinfo) - created_dt).total_seconds())
+                        started_dt = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+                        elapsed_s = int((datetime.now(started_dt.tzinfo) - started_dt).total_seconds())
                     except (ValueError, TypeError):
                         elapsed_s = None
                     low, high = estimate_extraction_seconds(c.get("content_length", 0))
