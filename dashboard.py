@@ -622,8 +622,13 @@ CONNECTION_ERROR_MSG = "We couldn't reach the system right now. Please try again
 # API latency varies - so it's always shown as a range.
 _CHUNK_SIZE = 12_000
 _CHUNK_OVERLAP = 300
-_SECONDS_PER_CHUNK_UNTHROTTLED = 6
-_SECONDS_PER_CHUNK_THROTTLED = 12
+_SECONDS_PER_CHUNK_UNTHROTTLED = 25  # observed: dense legal text with a
+                                      # complex structured schema regularly
+                                      # takes Gemini 20-40s+ per chunk, not
+                                      # the few seconds a simple chat call
+                                      # would take - corrected from an
+                                      # earlier, too-optimistic assumption
+_SECONDS_PER_CHUNK_THROTTLED = 35
 _FREE_TIER_BURST = 5
 
 

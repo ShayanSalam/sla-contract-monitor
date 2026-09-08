@@ -83,7 +83,11 @@ def get_llm() -> ChatGoogleGenerativeAI:
         model="gemini-3.6-flash",
         google_api_key=settings.GOOGLE_API_KEY,
         temperature=0,  # deterministic extraction, not creative writing
-        timeout=45,       # seconds per call, not per document
+        timeout=90,       # seconds per call - dense legal text with a complex
+                          # structured-output schema can genuinely take Gemini
+                          # 45-80s to respond; a shorter timeout was firing
+                          # before the model was actually done, causing
+                          # wasted retries rather than a faster result
         max_retries=2,    # bounds worst case to roughly 3 attempts total
     )
 
