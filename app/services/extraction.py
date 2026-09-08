@@ -68,11 +68,23 @@ class ExtractionResult(BaseModel):
 
 def get_llm() -> ChatGoogleGenerativeAI:
     """Creates the LLM client. Kept as a function (not a module-level singleton)
-    so tests can swap it out easily later."""
+    so tests can swap it out easily later.
+
+    timeout/max_retries are set explicitly because the client's defaults are
+    timeout=None (unbounded - a stalled call can hang forever) and
+    max_retries=6 (which, combined with no timeout, can compound into a very
+    long wait). Bounding both means a genuinely stuck call surfaces as a real
+    exception within a predictable window, which the background extraction
+    task already handles correctly (catches it, marks the contract "failed",
+    and the UI offers Retry/Delete) - instead of hanging indefinitely with
+    the contract stuck at "processing" and nothing to show for it.
+    """
     return ChatGoogleGenerativeAI(
         model="gemini-3.6-flash",
         google_api_key=settings.GOOGLE_API_KEY,
         temperature=0,  # deterministic extraction, not creative writing
+        timeout=45,       # seconds per call, not per document
+        max_retries=2,    # bounds worst case to roughly 3 attempts total
     )
 
 
